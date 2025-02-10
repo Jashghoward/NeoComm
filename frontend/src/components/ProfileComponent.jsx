@@ -1,16 +1,17 @@
 "use client";
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 
 const ProfileComponent = ({ user, onUpdate, onClose }) => {
-  const [editing, setEditing] = useState(false);
-  const [profile, setProfile] = useState({
+  const [formData, setFormData] = useState({
     username: user.username || '',
     status: user.status || '',
-    profile_picture: user.profile_picture || ''
+    profile_picture: null
   });
-  const [imageFile, setImageFile] = useState(null);
-  const [error, setError] = useState('');
+  const [previewUrl, setPreviewUrl] = useState(user.profile_picture || null);
+  const fileInputRef = useRef(null);
+  const router = useRouter();
 
   const handleImageChange = async (e) => {
     const file = e.target.files[0];
@@ -27,11 +28,11 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
         return;
       }
 
-      setImageFile(file);
+      setFormData(prev => ({ ...prev, profile_picture: file }));
       // Create preview URL
       const reader = new FileReader();
       reader.onloadend = () => {
-        setProfile(prev => ({ ...prev, profile_picture: reader.result }));
+        setPreviewUrl(reader.result);
       };
       reader.readAsDataURL(file);
     }
@@ -43,20 +44,20 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
       const token = localStorage.getItem('token');
       const formData = new FormData();
       
-      if (profile.username) {
-        formData.append('username', profile.username);
+      if (this.formData.username) {
+        formData.append('username', this.formData.username);
       }
-      if (profile.status) {
-        formData.append('status', profile.status);
+      if (this.formData.status) {
+        formData.append('status', this.formData.status);
       }
-      if (imageFile) {
-        formData.append('profile_picture', imageFile);
+      if (this.formData.profile_picture) {
+        formData.append('profile_picture', this.formData.profile_picture);
       }
 
       console.log('Sending profile update:', {
-        username: profile.username,
-        status: profile.status,
-        hasImage: !!imageFile
+        username: this.formData.username,
+        status: this.formData.status,
+        hasImage: !!this.formData.profile_picture
       });
 
       const response = await fetch('http://localhost:8001/profile/update', {
@@ -82,76 +83,111 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     }
   };
 
-  return (
-    <div className="relative bg-gray-900 p-6 rounded-lg shadow-lg max-w-md mx-auto">
-      {/* Close button */}
-      <button
-        onClick={onClose}
-        className="absolute top-2 right-2 text-gray-400 hover:text-white"
-      >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+  const handleLogout = () => {
+    // Clear all auth data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    // Disconnect socket if needed
+    if (window.socket) {
+      window.socket.disconnect();
+    }
+    
+    // Redirect to login
+    router.push('/login');
+  };
 
-      <div className="text-center mb-6">
-        <div className="relative w-32 h-32 mx-auto mb-4">
-          <img
-            src={profile.profile_picture || '/default-avatar.png'}
-            alt="Profile"
-            className="rounded-full object-cover w-full h-full"
+  return (
+    <div className="p-6 bg-gray-800 rounded-lg max-w-md w-full">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-white">Profile Settings</h2>
+        <button 
+          onClick={onClose} 
+          className="text-gray-400 hover:text-white"
+          aria-label="Close"
+        >
+          <svg 
+            className="w-6 h-6" 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
+          >
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d="M6 18L18 6M6 6l12 12" 
+            />
+          </svg>
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Profile Picture */}
+        <div className="text-center">
+          <div className="relative w-32 h-32 mx-auto mb-4">
+            <img
+              src={previewUrl || '/default-avatar.png'}
+              alt="Profile"
+              className="rounded-full w-full h-full object-cover"
+            />
+          </div>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImageChange}
+            accept="image/*"
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="text-blue-500 hover:text-blue-400 text-sm"
+          >
+            Change Profile Picture
+          </button>
+        </div>
+
+        {/* Username */}
+        <div>
+          <label className="block text-gray-300 mb-2">Username</label>
+          <input
+            type="text"
+            value={formData.username}
+            onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
+            className="w-full p-2 bg-gray-700 rounded text-white"
           />
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="text-red-500 mb-4 text-sm">{error}</div>
-          )}
-          <div>
-            <label className="block text-gray-400 mb-2">Profile Picture</label>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/jpg"
-              onChange={handleImageChange}
-              className="w-full text-gray-400"
-            />
-          </div>
-          <div>
-            <label className="block text-gray-400 mb-2">Username</label>
-            <input
-              type="text"
-              value={profile.username}
-              onChange={(e) => setProfile(prev => ({ ...prev, username: e.target.value }))}
-              className="w-full p-2 bg-gray-800 text-white rounded"
-            />
-          </div>
-          <div>
-            <label className="block text-gray-400 mb-2">Status</label>
-            <input
-              type="text"
-              value={profile.status}
-              onChange={(e) => setProfile(prev => ({ ...prev, status: e.target.value }))}
-              className="w-full p-2 bg-gray-800 text-white rounded"
-              placeholder="Set your status..."
-            />
-          </div>
-          <div className="flex space-x-4">
-            <button
-              type="submit"
-              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="bg-gray-700 text-white px-4 py-2 rounded hover:bg-gray-600"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
+        {/* Status */}
+        <div>
+          <label className="block text-gray-300 mb-2">Status</label>
+          <input
+            type="text"
+            value={formData.status}
+            onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value }))}
+            className="w-full p-2 bg-gray-700 rounded text-white"
+            placeholder="What's on your mind?"
+          />
+        </div>
+
+        {/* Buttons */}
+        <div className="flex justify-between pt-4">
+          <button
+            type="submit"
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors"
+          >
+            Save Changes
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
