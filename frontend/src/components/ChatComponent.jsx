@@ -100,7 +100,7 @@ const ChatComponent = ({ user: initialUser }) => {
     return () => setMounted(false);
   }, []); // Empty dependency array as this should only run once
 
-  // Socket connection effect
+  // Socket connection effect with better message handling
   useEffect(() => {
     if (!mounted || !user?.id) return;
 
@@ -109,10 +109,14 @@ const ChatComponent = ({ user: initialUser }) => {
       auth: { token: localStorage.getItem('token') }
     });
 
-    socket.on("newMessage", (message) => {
+    socket.on("receiveMessage", (message) => {
       setMessages(prevMessages => {
-        if (prevMessages.some(m => m.id === message.id)) return prevMessages;
+        // Prevent duplicate messages
+        if (prevMessages.some(m => m.id === message.id)) {
+          return prevMessages;
+        }
         
+        // Only add message if it's relevant to current chat
         if (selectedFriend && 
             ((message.sender_id === selectedFriend.id && message.receiver_id === user.id) || 
              (message.sender_id === user.id && message.receiver_id === selectedFriend.id))) {
@@ -127,10 +131,10 @@ const ChatComponent = ({ user: initialUser }) => {
     socketRef.current = socket;
 
     return () => {
-      socket.off("newMessage");
+      socket.off("receiveMessage");
       socket.disconnect();
     };
-  }, [mounted, user?.id, selectedFriend?.id]); // Minimal dependencies
+  }, [mounted, user?.id, selectedFriend?.id]);
 
   // Friends fetch effect with cleanup
   useEffect(() => {
@@ -260,7 +264,7 @@ const ChatComponent = ({ user: initialUser }) => {
     }
   };
 
-  // Send message function
+  // Simplified send message function
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedFriend) return;
 
@@ -279,7 +283,7 @@ const ChatComponent = ({ user: initialUser }) => {
       });
 
       if (!response.ok) throw new Error('Failed to send message');
-      setNewMessage(''); // Clear input immediately
+      setNewMessage(''); // Clear input immediately after sending
       
       // Don't manually add the message - wait for socket event
     } catch (err) {

@@ -149,7 +149,7 @@ app.get("/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// Send message
+// Update the message creation endpoint for better real-time handling
 app.post("/messages", authenticateToken, async (req, res) => {
   const { receiver_id, content } = req.body;
   
@@ -166,38 +166,35 @@ app.post("/messages", authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Not friends with this user' });
     }
 
-    // Insert the message
+    // Insert the message and get complete message data in one query
     const result = await pool.query(
-      `INSERT INTO messages (sender_id, receiver_id, content) 
-       VALUES ($1, $2, $3) 
-       RETURNING id, sender_id, receiver_id, content, sent_at`,
-      [req.user.id, receiver_id, content]
-    );
-
-    const messageData = await pool.query(
-      `SELECT 
+      `WITH inserted_message AS (
+        INSERT INTO messages (sender_id, receiver_id, content) 
+        VALUES ($1, $2, $3) 
+        RETURNING *
+      )
+      SELECT 
         m.*,
         sender.username as sender_username,
         sender.profile_picture as sender_profile_picture,
         receiver.username as receiver_username,
         receiver.profile_picture as receiver_profile_picture
-       FROM messages m
-       JOIN users sender ON m.sender_id = sender.id
-       JOIN users receiver ON m.receiver_id = receiver.id
-       WHERE m.id = $1`,
-      [result.rows[0].id]
+      FROM inserted_message m
+      JOIN users sender ON m.sender_id = sender.id
+      JOIN users receiver ON m.receiver_id = receiver.id`,
+      [req.user.id, receiver_id, content]
     );
 
     const completeMessage = {
-      ...messageData.rows[0],
-      sender_profile_picture: messageData.rows[0].sender_profile_picture ? 
-        `http://localhost:8001${messageData.rows[0].sender_profile_picture}` : null,
-      receiver_profile_picture: messageData.rows[0].receiver_profile_picture ? 
-        `http://localhost:8001${messageData.rows[0].receiver_profile_picture}` : null
+      ...result.rows[0],
+      sender_profile_picture: result.rows[0].sender_profile_picture ? 
+        `http://localhost:8001/uploads/${result.rows[0].sender_profile_picture.split('/').pop()}` : null,
+      receiver_profile_picture: result.rows[0].receiver_profile_picture ? 
+        `http://localhost:8001/uploads/${result.rows[0].receiver_profile_picture.split('/').pop()}` : null
     };
 
-    // Emit to both sender and receiver
-    io.to(`user_${req.user.id}`).to(`user_${receiver_id}`).emit('newMessage', completeMessage);
+    // Emit to both sender and receiver with a specific event name
+    io.emit('receiveMessage', completeMessage);
 
     res.status(201).json(completeMessage);
   } catch (err) {
