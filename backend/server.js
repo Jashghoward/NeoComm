@@ -1,4 +1,11 @@
 require("dotenv").config();
+
+// Add this right after to verify the variables are loaded
+console.log('Environment Variables Check:', {
+  spotifyClientId: process.env.SPOTIFY_CLIENT_ID ? 'Set' : 'Not set',
+  spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET ? 'Set' : 'Not set'
+});
+
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -8,6 +15,8 @@ const http = require("http");
 const { Server } = require("socket.io");
 const multer = require('multer');
 const path = require('path');
+const SpotifyWebApi = require('spotify-web-api-node');
+const spotifyConfig = require('./config/spotify');
 
 const app = express();
 const server = http.createServer(app);
@@ -76,6 +85,17 @@ const upload = multer({
     cb(new Error('Only .png, .jpg and .jpeg format allowed!'));
   }
 });
+
+// Initialize Spotify API with config
+const spotifyApi = new SpotifyWebApi(spotifyConfig);
+
+// Add this to your database schema (run this SQL)
+const spotifySchemaSQL = `
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS spotify_access_token TEXT,
+ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT,
+ADD COLUMN IF NOT EXISTS spotify_connected BOOLEAN DEFAULT FALSE;
+`;
 
 // Signup route
 app.post("/auth/signup", async (req, res) => {
@@ -451,6 +471,84 @@ pool.query('SELECT NOW()', (err, res) => {
     console.error('Database connection error:', err);
   } else {
     console.log('Database connected successfully');
+  }
+});
+
+// Spotify auth endpoint
+app.get('/auth/spotify', authenticateToken, (req, res) => {
+  try {
+    const scopes = ['user-read-currently-playing', 'playlist-read-private'];
+    
+    // Pass the JWT token as the state parameter
+    const state = req.headers.authorization.split(' ')[1];
+    const authorizeURL = spotifyApi.createAuthorizeURL(scopes, state);
+    
+    console.log('Authorization URL:', authorizeURL);
+    res.redirect(authorizeURL);
+  } catch (err) {
+    console.error('Spotify auth error:', err);
+    res.status(500).json({ 
+      error: 'Failed to initialize Spotify authorization',
+      details: err.message 
+    });
+  }
+});
+
+// Spotify callback
+app.get('/auth/spotify/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    const data = await spotifyApi.authorizationCodeGrant(code);
+    
+    // Get user from token in query params or session
+    const token = req.query.state; // We'll pass the user's JWT token in the state parameter
+    let userId;
+    
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (err) {
+      console.error('Token verification failed:', err);
+      return res.status(401).json({ error: 'Authentication failed' });
+    }
+
+    // Store tokens in user's record
+    await pool.query(
+      `UPDATE users 
+       SET spotify_access_token = $1, 
+           spotify_refresh_token = $2,
+           spotify_connected = true
+       WHERE id = $3`,
+      [data.body.access_token, data.body.refresh_token, userId]
+    );
+
+    // Redirect back to chat with success parameter
+    res.redirect('/chat?spotify=connected');
+  } catch (err) {
+    console.error('Spotify auth error:', err);
+    res.redirect('/chat?spotify=error');
+  }
+});
+
+// Get user's current playing track
+app.get('/spotify/current-track', authenticateToken, async (req, res) => {
+  try {
+    const userTokens = await pool.query(
+      'SELECT spotify_access_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    if (!userTokens.rows[0]?.spotify_access_token) {
+      return res.status(401).json({ error: 'Spotify not connected' });
+    }
+
+    spotifyApi.setAccessToken(userTokens.rows[0].spotify_access_token);
+    const data = await spotifyApi.getMyCurrentPlayingTrack();
+    
+    res.json(data.body);
+  } catch (err) {
+    console.error('Spotify API error:', err);
+    res.status(500).json({ error: 'Failed to fetch current track' });
   }
 });
 

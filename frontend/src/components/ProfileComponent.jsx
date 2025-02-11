@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 
@@ -9,9 +9,55 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     status: user.status || '',
     profile_picture: null
   });
+  const [spotifyStatus, setSpotifyStatus] = useState(null);
+  const [isSpotifyConnected, setIsSpotifyConnected] = useState(user.spotify_connected || false);
   const [previewUrl, setPreviewUrl] = useState(user.profile_picture || null);
+  const statusInterval = useRef(null);
   const fileInputRef = useRef(null);
   const router = useRouter();
+
+  // Fetch current playing track
+  const fetchCurrentTrack = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:8001/spotify/current-track', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.item) {
+          const trackInfo = `🎵 ${data.item.name} - ${data.item.artists[0].name}`;
+          setSpotifyStatus(trackInfo);
+          // Automatically update user's status with current track
+          setFormData(prev => ({ ...prev, status: trackInfo }));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching Spotify status:', err);
+    }
+  };
+
+  // Connect Spotify account
+  const handleSpotifyConnect = () => {
+    window.location.href = 'http://localhost:8001/auth/spotify';
+  };
+
+  // Start polling for track updates when component mounts
+  useEffect(() => {
+    if (isSpotifyConnected) {
+      fetchCurrentTrack();
+      statusInterval.current = setInterval(fetchCurrentTrack, 30000); // Update every 30 seconds
+    }
+
+    return () => {
+      if (statusInterval.current) {
+        clearInterval(statusInterval.current);
+      }
+    };
+  }, [isSpotifyConnected]);
 
   const handleImageChange = async (e) => {
     const file = e.target.files[0];
@@ -97,6 +143,14 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     router.push('/login');
   };
 
+  const spotifyConfig = {
+    clientId: process.env.e35444cbe2034a12a2c624ef0d92ec65,
+    clientSecret: process.env.afd4baa7041f4f3e880bf55401b1e850,
+    redirectUri: 'http://localhost:8001/auth/spotify/callback'
+  };
+  
+  module.exports = spotifyConfig;
+
   return (
     <div className="p-6 bg-gray-800 rounded-lg max-w-md w-full">
       <div className="flex justify-between items-center mb-6">
@@ -171,6 +225,42 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
           />
         </div>
 
+        {/* Spotify Integration */}
+        <div className="mt-6 border-t border-gray-700 pt-6">
+          <h3 className="text-xl font-semibold text-white mb-4">Spotify Integration</h3>
+          
+          {!isSpotifyConnected ? (
+            <button
+              onClick={handleSpotifyConnect}
+              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition-colors flex items-center"
+            >
+              <svg className="w-6 h-6 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+              </svg>
+              Connect Spotify
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-green-400">✓ Spotify Connected</span>
+                {spotifyStatus && (
+                  <button
+                    onClick={() => setFormData(prev => ({ ...prev, status: spotifyStatus }))}
+                    className="text-sm text-green-400 hover:text-green-300"
+                  >
+                    Update Status
+                  </button>
+                )}
+              </div>
+              {spotifyStatus && (
+                <div className="bg-gray-700 p-3 rounded">
+                  <p className="text-white">{spotifyStatus}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Buttons */}
         <div className="flex justify-between pt-4">
           <button
@@ -192,4 +282,4 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
   );
 };
 
-export default ProfileComponent; 
+export default ProfileComponent;
