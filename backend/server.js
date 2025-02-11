@@ -20,7 +20,6 @@ const spotifyConfig = require('./config/spotify');
 const OpenAI = require('openai');
 const googleCalendarService = require('./integrations/googleCalendar');
 const { google } = require('googleapis');
-const { OAuth2Client } = require('google-auth-library');
 const fileService = require('./services/fileService');
 
 const app = express();
@@ -108,7 +107,7 @@ ADD COLUMN IF NOT EXISTS spotify_connected BOOLEAN DEFAULT FALSE;
 `;
 
 // Initialize OAuth2 client
-const oauth2Client = new OAuth2Client(
+const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_REDIRECT_URI
@@ -401,7 +400,7 @@ app.get("/", (req, res) => {
 
 // Add a health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.json({ status: 'ok' });
 });
 
 // Profile update endpoint
@@ -475,11 +474,7 @@ app.use('/uploads', (req, res, next) => {
 // Add middleware for better error logging
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
-  res.status(500).json({ 
-    error: 'Server error', 
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
+  res.status(500).json({ error: err.message });
 });
 
 // Verify database connection
@@ -662,9 +657,11 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 });
 
-// Calendar events endpoint
+// Update the calendar events endpoint with better logging
 app.get('/calendar/events', authenticateToken, async (req, res) => {
   try {
+    console.log('Fetching events for user:', req.user.id);
+    
     // Get user's refresh token
     const result = await pool.query(
       'SELECT google_refresh_token FROM users WHERE id = $1',
@@ -673,6 +670,7 @@ app.get('/calendar/events', authenticateToken, async (req, res) => {
 
     const refreshToken = result.rows[0]?.google_refresh_token;
     if (!refreshToken) {
+      console.log('No refresh token found for user');
       return res.status(401).json({ error: 'Calendar not connected' });
     }
 
@@ -684,19 +682,87 @@ app.get('/calendar/events', authenticateToken, async (req, res) => {
     // Create calendar instance
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
+    // Get events for a wider range (past 30 days to next 365 days)
+    const timeMin = new Date();
+    timeMin.setDate(timeMin.getDate() - 30); // Include past 30 days
+    const timeMax = new Date();
+    timeMax.setDate(timeMax.getDate() + 365); // Include next year
+
+    console.log('Fetching events between:', {
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString()
+    });
+
     // Get events
     const response = await calendar.events.list({
       calendarId: 'primary',
-      timeMin: new Date().toISOString(),
-      maxResults: 10,
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      maxResults: 2500, // Increased maximum results
       singleEvents: true,
       orderBy: 'startTime',
     });
 
+    console.log('Found events:', response.data.items.length);
+    console.log('Sample event:', response.data.items[0]); // Log first event for debugging
+
     res.json({ events: response.data.items });
   } catch (err) {
     console.error('Calendar events error:', err);
-    res.status(500).json({ error: 'Failed to fetch calendar events' });
+    res.status(500).json({ error: 'Failed to fetch calendar events', details: err.message });
+  }
+});
+
+// Update the create event endpoint to immediately return the created event
+app.post('/calendar/create-event', authenticateToken, async (req, res) => {
+  try {
+    console.log('Creating event for user:', req.user.id);
+    
+    // Get user's refresh token
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    // Set up OAuth client with refresh token
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Format the event
+    const event = {
+      summary: req.body.summary,
+      description: req.body.description,
+      start: {
+        dateTime: req.body.start.dateTime,
+        timeZone: req.body.start.timeZone
+      },
+      end: {
+        dateTime: req.body.end.dateTime,
+        timeZone: req.body.end.timeZone
+      }
+    };
+
+    console.log('Creating event:', event);
+
+    // Create the event
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: event,
+    });
+
+    console.log('Event created:', response.data);
+    res.json(response.data);
+  } catch (err) {
+    console.error('Create event error:', err);
+    res.status(500).json({ error: 'Failed to create event', details: err.message });
   }
 });
 

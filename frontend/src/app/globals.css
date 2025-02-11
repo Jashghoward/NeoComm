@@ -19,3 +19,149 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Add these styles for the calendar */
+.calendar-container {
+  background: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+.fc {
+  /* FullCalendar styles */
+  background: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.fc-header-toolbar {
+  margin-bottom: 1.5em;
+  padding: 0.5rem;
+}
+
+.fc-event {
+  cursor: pointer;
+}
+
+.fc-day-today {
+  background-color: #f3f4f6 !important;
+}
+
+.fc-button-primary {
+  background-color: #3b82f6 !important;
+  border-color: #3b82f6 !important;
+}
+
+.fc-button-primary:hover {
+  background-color: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+/* Dark theme for calendar */
+.calendar-container.dark-theme {
+  background: #1a1a1a;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+.dark-theme .fc {
+  background: #1a1a1a;
+  color: #ffffff;
+}
+
+.dark-theme .fc-toolbar-title {
+  color: #ffffff;
+}
+
+.dark-theme .fc-button {
+  background-color: #4a5568 !important;
+  border-color: #4a5568 !important;
+  color: #ffffff !important;
+}
+
+.dark-theme .fc-button:hover {
+  background-color: #2d3748 !important;
+  border-color: #2d3748 !important;
+}
+
+.dark-theme .fc-button-active {
+  background-color: #3182ce !important;
+  border-color: #3182ce !important;
+}
+
+.dark-theme .fc-day {
+  background-color: #2d3748 !important;
+  border-color: #4a5568 !important;
+}
+
+.dark-theme .fc-day-today {
+  background-color: #2c5282 !important;
+}
+
+.dark-theme .fc-daygrid-day-number,
+.dark-theme .fc-col-header-cell-cushion {
+  color: #ffffff;
+  text-decoration: none !important;
+}
+
+.dark-theme .fc-day-past {
+  background-color: #1a202c !important;
+}
+
+.dark-theme .fc-day-future {
+  background-color: #2d3748 !important;
+}
+
+.dark-theme .fc-timegrid-slot,
+.dark-theme .fc-timegrid-axis {
+  background-color: #2d3748 !important;
+  border-color: #4a5568 !important;
+  color: #ffffff;
+}
+
+.dark-theme .fc-theme-standard td,
+.dark-theme .fc-theme-standard th {
+  border-color: #4a5568 !important;
+}
+
+.dark-theme .fc-event {
+  background-color: #4285f4;
+  border-color: #4285f4;
+  color: white;
+}
+
+.dark-theme .fc-event:hover {
+  opacity: 0.9;
+}
+
+.dark-theme .fc-day-other {
+  background-color: #1a1a1a !important;
+  opacity: 0.5;
+}
+
+.dark-theme .fc-highlight {
+  background-color: #3182ce !important;
+  opacity: 0.3;
+}
+
+/* Make sure events are visible */
+.fc-event {
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: 1px 0;
+  border-radius: 3px;
+}
+
+.fc-event-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-event-time {
+  font-size: 0.9em;
+  opacity: 0.9;
+}
