@@ -10,6 +10,7 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     status: user.status || '',
     profile_picture: null
   });
+  const [error, setError] = useState('');
   const [spotifyStatus, setSpotifyStatus] = useState(null);
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
   const [currentTrack, setCurrentTrack] = useState(null);
@@ -47,12 +48,34 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Add function to update status with current track
-  const updateStatusWithTrack = () => {
+  // Update the updateStatusWithTrack function
+  const updateStatusWithTrack = async () => {
     if (currentTrack) {
       const trackStatus = `🎵 ${currentTrack.name} - ${currentTrack.artist}`;
       setFormData(prev => ({ ...prev, status: trackStatus }));
-      handleSubmit();
+      
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch('http://localhost:8001/profile/update', {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ status: trackStatus })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to update status');
+        }
+
+        const updatedProfile = await response.json();
+        onUpdate(updatedProfile);
+        toast.success('Status updated with current track!');
+      } catch (err) {
+        console.error('Error updating status:', err);
+        toast.error('Failed to update status');
+      }
     }
   };
 
@@ -147,34 +170,29 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     }
   };
 
+  // Fix the handleSubmit function
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     try {
       const token = localStorage.getItem('token');
-      const formData = new FormData();
+      const formDataToSend = new FormData();
       
-      if (this.formData.username) {
-        formData.append('username', this.formData.username);
+      if (formData.username) {
+        formDataToSend.append('username', formData.username);
       }
-      if (this.formData.status) {
-        formData.append('status', this.formData.status);
+      if (formData.status) {
+        formDataToSend.append('status', formData.status);
       }
-      if (this.formData.profile_picture) {
-        formData.append('profile_picture', this.formData.profile_picture);
+      if (formData.profile_picture) {
+        formDataToSend.append('profile_picture', formData.profile_picture);
       }
-
-      console.log('Sending profile update:', {
-        username: this.formData.username,
-        status: this.formData.status,
-        hasImage: !!this.formData.profile_picture
-      });
 
       const response = await fetch('http://localhost:8001/profile/update', {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`
         },
-        body: formData // Don't set Content-Type header when sending FormData
+        body: formDataToSend
       });
 
       if (!response.ok) {
@@ -183,12 +201,12 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
       }
 
       const updatedProfile = await response.json();
-      console.log('Profile updated successfully:', updatedProfile);
       onUpdate(updatedProfile);
       onClose();
+      toast.success('Profile updated successfully!');
     } catch (err) {
       console.error('Profile update error:', err);
-      setError(err.message || 'Failed to update profile');
+      toast.error(err.message || 'Failed to update profile');
     }
   };
 
