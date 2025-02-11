@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { io } from "socket.io-client";
 import ProfileComponent from "./ProfileComponent";
 import { toast } from "react-hot-toast";
+import AIChatComponent from './AIChatComponent';
 
 const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23CBD5E0' d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E";
 
@@ -20,6 +21,7 @@ const ChatComponent = ({ user: initialUser }) => {
   const [showProfile, setShowProfile] = useState(false);
   const [newFriendEmail, setNewFriendEmail] = useState('');
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [showAIChat, setShowAIChat] = useState(false);
   
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -348,6 +350,17 @@ const ChatComponent = ({ user: initialUser }) => {
 
       {/* Friends List Sidebar */}
       <div className="w-1/4 border-r border-gray-800 p-4">
+        {/* AI Chat Button */}
+        <button
+          onClick={() => setShowAIChat(true)}
+          className="w-full bg-gradient-to-r from-purple-500 to-blue-500 text-white p-3 rounded-lg mb-4 flex items-center justify-center space-x-2 hover:opacity-90 transition-opacity"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <span>AI Assistant</span>
+        </button>
+
         {/* Profile Icon and User Info */}
         <div className="flex items-center p-4 border-t border-gray-700">
           <button
@@ -420,71 +433,98 @@ const ChatComponent = ({ user: initialUser }) => {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {selectedFriend ? (
-          <>
-            {/* Chat Header */}
-            <div className="p-4 bg-gray-800 border-b border-gray-700 flex items-center">
-              <ProfileImage src={selectedFriend.profile_picture} size="w-10 h-10" />
+      {showAIChat ? (
+        <div className="flex-1 flex flex-col">
+          <div className="bg-gray-800 p-4 flex justify-between items-center">
+            <div className="flex items-center">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
               <div className="ml-3">
-                <h3 className="text-white font-semibold">
-                  {selectedFriend.username || selectedFriend.email}
-                </h3>
-                <p className="text-gray-400 text-sm">
-                  {truncateStatus(selectedFriend.status)}
-                </p>
+                <div className="text-white font-semibold">AI Assistant</div>
+                <div className="text-gray-400 text-sm">Always here to help</div>
               </div>
             </div>
+            <button
+              onClick={() => setShowAIChat(false)}
+              className="text-gray-400 hover:text-white"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <AIChatComponent user={user} />
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col">
+          {selectedFriend ? (
+            <>
+              {/* Chat Header */}
+              <div className="p-4 bg-gray-800 border-b border-gray-700 flex items-center">
+                <ProfileImage src={selectedFriend.profile_picture} size="w-10 h-10" />
+                <div className="ml-3">
+                  <h3 className="text-white font-semibold">
+                    {selectedFriend.username || selectedFriend.email}
+                  </h3>
+                  <p className="text-gray-400 text-sm">
+                    {truncateStatus(selectedFriend.status)}
+                  </p>
+                </div>
+              </div>
 
-            {/* Messages */}
-            <div className="flex-1 p-4 overflow-y-auto bg-gray-900">
-              {messages.map((message, index) => (
-                <div
-                  key={`${message.id}-${index}`}
-                  className={`mb-4 ${
-                    message.sender_id === user.id ? 'text-right' : 'text-left'
-                  }`}
-                >
+              {/* Messages */}
+              <div className="flex-1 p-4 overflow-y-auto bg-gray-900">
+                {messages.map((message, index) => (
                   <div
-                    className={`inline-block p-3 rounded-lg ${
-                      message.sender_id === user.id
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-gray-700 text-white'
+                    key={`${message.id}-${index}`}
+                    className={`mb-4 ${
+                      message.sender_id === user.id ? 'text-right' : 'text-left'
                     }`}
                   >
-                    {message.content}
+                    <div
+                      className={`inline-block p-3 rounded-lg ${
+                        message.sender_id === user.id
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-700 text-white'
+                      }`}
+                    >
+                      {message.content}
+                    </div>
                   </div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Message Input */}
-            <div className="p-4 bg-gray-800">
-              <div className="flex space-x-2">
-                <input
-                  type="text"
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                  placeholder="Type a message..."
-                  className="flex-1 p-2 rounded bg-gray-700 text-white"
-                />
-                <button
-                  onClick={sendMessage}
-                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                >
-                  Send
-                </button>
+                ))}
+                <div ref={messagesEndRef} />
               </div>
+
+              {/* Message Input */}
+              <div className="p-4 bg-gray-800">
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 p-2 rounded bg-gray-700 text-white"
+                  />
+                  <button
+                    onClick={sendMessage}
+                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-400">
+              Select a friend to start chatting
             </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
-            Select a friend to start chatting
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -17,6 +17,7 @@ const multer = require('multer');
 const path = require('path');
 const SpotifyWebApi = require('spotify-web-api-node');
 const spotifyConfig = require('./config/spotify');
+const OpenAI = require('openai');
 
 const app = express();
 const server = http.createServer(app);
@@ -88,6 +89,11 @@ const upload = multer({
 
 // Initialize Spotify API with config
 const spotifyApi = new SpotifyWebApi(spotifyConfig);
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 // Add this to your database schema (run this SQL)
 const spotifySchemaSQL = `
@@ -549,6 +555,42 @@ app.get('/spotify/current-track', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Error fetching current track:', err);
     res.status(500).json({ error: 'Failed to fetch current track' });
+  }
+});
+
+// Update the AI chat endpoint
+app.post('/ai/chat', authenticateToken, async (req, res) => {
+  try {
+    const { message, userContext } = req.body;
+    
+    // Create a system message that includes user context
+    const systemMessage = `You are a helpful AI assistant for a chat application. 
+    You're talking to ${userContext.username}, whose current status is "${userContext.status}".
+    Be friendly and personable, and feel free to reference their status or username in natural ways.
+    Keep responses concise (max 2-3 sentences unless specifically asked for more detail).`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: systemMessage },
+        { role: "user", content: message }
+      ],
+      temperature: 0.7,
+      max_tokens: 150
+    });
+
+    const aiResponse = completion.choices[0].message.content;
+    
+    // Log for debugging
+    console.log('AI Response:', aiResponse);
+    
+    res.json({ response: aiResponse });
+  } catch (err) {
+    console.error('OpenAI error:', err);
+    res.status(500).json({ 
+      error: 'Failed to process AI chat request',
+      details: err.message 
+    });
   }
 });
 
