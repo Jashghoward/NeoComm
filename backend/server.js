@@ -824,6 +824,96 @@ app.get('/calendar/status', authenticateToken, async (req, res) => {
   }
 });
 
+// Update event endpoint
+app.put('/calendar/events/:eventId', authenticateToken, async (req, res) => {
+  try {
+    console.log('Updating event:', {
+      eventId: req.params.eventId,
+      body: req.body
+    });
+
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // First, get the existing event to ensure it exists
+    try {
+      await calendar.events.get({
+        calendarId: 'primary',
+        eventId: req.params.eventId
+      });
+    } catch (err) {
+      console.error('Event not found:', err);
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // Update the event
+    const response = await calendar.events.update({
+      calendarId: 'primary',
+      eventId: req.params.eventId,
+      requestBody: {
+        summary: req.body.summary,
+        description: req.body.description,
+        start: req.body.start,
+        end: req.body.end
+      }
+    });
+
+    console.log('Event updated successfully:', response.data);
+    res.json(response.data);
+  } catch (err) {
+    console.error('Update event error:', err);
+    res.status(500).json({ 
+      error: 'Failed to update event', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Delete event endpoint
+app.delete('/calendar/events/:eventId', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: req.params.eventId
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete event error:', err);
+    res.status(500).json({ error: 'Failed to delete event', details: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 8001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
