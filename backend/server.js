@@ -286,44 +286,24 @@ app.get("/friends", async (req, res) => {
 
 // Update the add friend endpoint with better error handling and logging
 app.post('/friends/add', authenticateToken, async (req, res) => {
-  const { email } = req.body;
-  
-  try {
-    // Find user by email
-    const userResult = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
-    );
+  const { user_id, email } = req.body;
 
+  try {
+    // Check if the user exists
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     const friendId = userResult.rows[0].id;
 
-    // Check if friendship already exists
-    const existingFriend = await pool.query(
-      `SELECT * FROM friends 
-       WHERE (user_id = $1 AND friend_id = $2)
-       OR (user_id = $2 AND friend_id = $1)`,
-      [req.user.id, friendId]
-    );
+    // Add the friend relationship without the status column
+    await pool.query('INSERT INTO friends (user_id, friend_id) VALUES ($1, $2)', [user_id, friendId]);
 
-    if (existingFriend.rows.length > 0) {
-      return res.status(400).json({ error: 'Friendship already exists' });
-    }
-
-    // Create new friendship
-    await pool.query(
-      `INSERT INTO friends (user_id, friend_id, status) 
-       VALUES ($1, $2, 'accepted')`,
-      [req.user.id, friendId]
-    );
-
-    res.json({ message: 'Friend added successfully' });
-  } catch (err) {
-    console.error('Error adding friend:', err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(201).json({ message: 'Friend added successfully' });
+  } catch (error) {
+    console.error('Error adding friend:', error);
+    res.status(500).json({ error: 'Failed to add friend' });
   }
 });
 
