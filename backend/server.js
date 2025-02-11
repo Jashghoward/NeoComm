@@ -477,20 +477,23 @@ pool.query('SELECT NOW()', (err, res) => {
 // Spotify auth endpoint
 app.get('/auth/spotify', authenticateToken, (req, res) => {
   try {
-    const scopes = ['user-read-currently-playing', 'playlist-read-private'];
+    const scopes = [
+      'user-read-currently-playing',
+      'playlist-read-private',
+      'user-read-playback-state'
+    ];
     
-    // Pass the JWT token as the state parameter
-    const state = req.headers.authorization.split(' ')[1];
-    const authorizeURL = spotifyApi.createAuthorizeURL(scopes, state);
+    const token = req.headers.authorization.split(' ')[1];
+    // Make sure this matches exactly
+    const redirectUri = 'http://localhost:8001/auth/spotify/callback';
+    spotifyApi.setRedirectURI(redirectUri);
     
-    console.log('Authorization URL:', authorizeURL);
-    res.redirect(authorizeURL);
+    const authorizeURL = spotifyApi.createAuthorizeURL(scopes, token);
+    console.log('Spotify Auth URL:', authorizeURL);
+    res.send(authorizeURL);
   } catch (err) {
     console.error('Spotify auth error:', err);
-    res.status(500).json({ 
-      error: 'Failed to initialize Spotify authorization',
-      details: err.message 
-    });
+    res.status(500).json({ error: 'Failed to initialize Spotify authorization' });
   }
 });
 
@@ -498,56 +501,53 @@ app.get('/auth/spotify', authenticateToken, (req, res) => {
 app.get('/auth/spotify/callback', async (req, res) => {
   try {
     const { code } = req.query;
+    spotifyApi.setRedirectURI('http://localhost:8001/auth/spotify/callback');
     const data = await spotifyApi.authorizationCodeGrant(code);
     
-    // Get user from token in query params or session
-    const token = req.query.state; // We'll pass the user's JWT token in the state parameter
-    let userId;
-    
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      userId = decoded.id;
-    } catch (err) {
-      console.error('Token verification failed:', err);
-      return res.status(401).json({ error: 'Authentication failed' });
-    }
+    // ... rest of the auth code ...
 
-    // Store tokens in user's record
-    await pool.query(
-      `UPDATE users 
-       SET spotify_access_token = $1, 
-           spotify_refresh_token = $2,
-           spotify_connected = true
-       WHERE id = $3`,
-      [data.body.access_token, data.body.refresh_token, userId]
-    );
-
-    // Redirect back to chat with success parameter
-    res.redirect('/chat?spotify=connected');
+    // Update redirect URL to root instead of /chat
+    res.redirect('http://localhost:3000/?spotify=connected');
   } catch (err) {
-    console.error('Spotify auth error:', err);
-    res.redirect('/chat?spotify=error');
+    console.error('Spotify callback error:', err);
+    // Update error redirect as well
+    res.redirect('http://localhost:3000/?spotify=error');
   }
 });
 
-// Get user's current playing track
+// Add an endpoint to get current playing track
 app.get('/spotify/current-track', authenticateToken, async (req, res) => {
   try {
-    const userTokens = await pool.query(
+    // Get user's Spotify tokens
+    const userResult = await pool.query(
       'SELECT spotify_access_token FROM users WHERE id = $1',
       [req.user.id]
     );
 
-    if (!userTokens.rows[0]?.spotify_access_token) {
-      return res.status(401).json({ error: 'Spotify not connected' });
+    if (!userResult.rows[0]?.spotify_access_token) {
+      return res.status(404).json({ error: 'Spotify not connected' });
     }
 
-    spotifyApi.setAccessToken(userTokens.rows[0].spotify_access_token);
-    const data = await spotifyApi.getMyCurrentPlayingTrack();
+    // Set the access token
+    spotifyApi.setAccessToken(userResult.rows[0].spotify_access_token);
+
+    // Get current playing track
+    const data = await spotifyApi.getMyCurrentPlaybackState();
     
-    res.json(data.body);
+    if (data.body && data.body.item) {
+      const trackInfo = {
+        name: data.body.item.name,
+        artist: data.body.item.artists[0].name,
+        album: data.body.item.album.name,
+        albumArt: data.body.item.album.images[0]?.url,
+        isPlaying: data.body.is_playing
+      };
+      res.json(trackInfo);
+    } else {
+      res.json({ error: 'No track currently playing' });
+    }
   } catch (err) {
-    console.error('Spotify API error:', err);
+    console.error('Error fetching current track:', err);
     res.status(500).json({ error: 'Failed to fetch current track' });
   }
 });

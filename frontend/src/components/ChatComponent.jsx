@@ -349,15 +349,17 @@ const ChatComponent = ({ user: initialUser }) => {
       {/* Friends List Sidebar */}
       <div className="w-1/4 border-r border-gray-800 p-4">
         {/* Profile Icon and User Info */}
-        <div 
-          className="flex items-center cursor-pointer mb-6"
-          onClick={() => setShowProfile(true)}
-        >
-          <ProfileImage src={user.profile_picture} />
-          <div className="ml-3">
-            <div className="text-white font-semibold">{user.username}</div>
-            <div className="text-gray-400 text-sm">{truncateStatus(user.status)}</div>
-          </div>
+        <div className="flex items-center p-4 border-t border-gray-700">
+          <button
+            className="flex items-center w-full hover:bg-gray-700 p-2 rounded-lg transition-colors"
+            onClick={() => setShowProfile(true)}
+          >
+            <ProfileImage src={user?.profile_picture || DEFAULT_AVATAR} />
+            <div className="ml-3">
+              <div className="text-white font-semibold">{user?.username}</div>
+              <div className="text-gray-400 text-sm">{truncateStatus(user?.status || '')}</div>
+            </div>
+          </button>
         </div>
 
         <div className="flex justify-between items-center mb-4">

@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { toast } from 'react-hot-toast';
 
 const ProfileComponent = ({ user, onUpdate, onClose }) => {
   const [formData, setFormData] = useState({
@@ -10,11 +11,50 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
     profile_picture: null
   });
   const [spotifyStatus, setSpotifyStatus] = useState(null);
-  const [isSpotifyConnected, setIsSpotifyConnected] = useState(user.spotify_connected || false);
+  const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [currentTrack, setCurrentTrack] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(user.profile_picture || null);
   const statusInterval = useRef(null);
   const fileInputRef = useRef(null);
   const router = useRouter();
+
+  // Check Spotify connection and current track
+  useEffect(() => {
+    const checkSpotifyStatus = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch('http://localhost:8001/spotify/current-track', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setIsSpotifyConnected(true);
+          if (!data.error) {
+            setCurrentTrack(data);
+          }
+        }
+      } catch (err) {
+        console.error('Error checking Spotify status:', err);
+      }
+    };
+
+    checkSpotifyStatus();
+    // Poll for track updates every 30 seconds
+    const interval = setInterval(checkSpotifyStatus, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Add function to update status with current track
+  const updateStatusWithTrack = () => {
+    if (currentTrack) {
+      const trackStatus = `🎵 ${currentTrack.name} - ${currentTrack.artist}`;
+      setFormData(prev => ({ ...prev, status: trackStatus }));
+      handleSubmit();
+    }
+  };
 
   // Fetch current playing track
   const fetchCurrentTrack = async () => {
@@ -41,8 +81,31 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
   };
 
   // Connect Spotify account
-  const handleSpotifyConnect = () => {
-    window.location.href = 'http://localhost:8001/auth/spotify';
+  const handleSpotifyConnect = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast.error('Please log in first');
+      return;
+    }
+    
+    try {
+      // Make a GET request to the Spotify auth endpoint with Authorization header
+      const response = await fetch('http://localhost:8001/auth/spotify', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.text();
+        window.location.href = data; // Redirect to Spotify auth URL
+      } else {
+        throw new Error('Failed to initialize Spotify authorization');
+      }
+    } catch (err) {
+      console.error('Spotify connection error:', err);
+      toast.error('Failed to connect to Spotify');
+    }
   };
 
   // Start polling for track updates when component mounts
@@ -243,18 +306,29 @@ const ProfileComponent = ({ user, onUpdate, onClose }) => {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-green-400">✓ Spotify Connected</span>
-                {spotifyStatus && (
-                  <button
-                    onClick={() => setFormData(prev => ({ ...prev, status: spotifyStatus }))}
-                    className="text-sm text-green-400 hover:text-green-300"
-                  >
-                    Update Status
-                  </button>
-                )}
               </div>
-              {spotifyStatus && (
+              {currentTrack && (
                 <div className="bg-gray-700 p-3 rounded">
-                  <p className="text-white">{spotifyStatus}</p>
+                  <p className="text-white mb-2">Currently Playing:</p>
+                  <div className="flex items-center">
+                    {currentTrack.albumArt && (
+                      <img 
+                        src={currentTrack.albumArt} 
+                        alt="Album Art" 
+                        className="w-12 h-12 rounded mr-3"
+                      />
+                    )}
+                    <div>
+                      <p className="text-white font-medium">{currentTrack.name}</p>
+                      <p className="text-gray-400">{currentTrack.artist}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={updateStatusWithTrack}
+                    className="mt-3 bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600 transition-colors"
+                  >
+                    Set as Status
+                  </button>
                 </div>
               )}
             </div>

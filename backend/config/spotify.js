@@ -1,7 +1,7 @@
 const spotifyConfig = {
   clientId: process.env.SPOTIFY_CLIENT_ID,
   clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-  redirectUri: 'http://localhost:8001/auth/spotify/callback'
+  redirectUri: 'http://localhost:8001/auth/spotify/callback'  // Matches Spotify Dashboard
 };
 
 // Validation and logging
