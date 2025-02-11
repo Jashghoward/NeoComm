@@ -1,4 +1,11 @@
 require("dotenv").config();
+
+// Add this right after to verify the variables are loaded
+console.log('Environment Variables Check:', {
+  spotifyClientId: process.env.SPOTIFY_CLIENT_ID ? 'Set' : 'Not set',
+  spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET ? 'Set' : 'Not set'
+});
+
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -8,6 +15,12 @@ const http = require("http");
 const { Server } = require("socket.io");
 const multer = require('multer');
 const path = require('path');
+const SpotifyWebApi = require('spotify-web-api-node');
+const spotifyConfig = require('./config/spotify');
+const OpenAI = require('openai');
+const googleCalendarService = require('./integrations/googleCalendar');
+const { google } = require('googleapis');
+const fileService = require('./services/fileService');
 
 const app = express();
 const server = http.createServer(app);
@@ -76,6 +89,29 @@ const upload = multer({
     cb(new Error('Only .png, .jpg and .jpeg format allowed!'));
   }
 });
+
+// Initialize Spotify API with config
+const spotifyApi = new SpotifyWebApi(spotifyConfig);
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+// Add this to your database schema (run this SQL)
+const spotifySchemaSQL = `
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS spotify_access_token TEXT,
+ADD COLUMN IF NOT EXISTS spotify_refresh_token TEXT,
+ADD COLUMN IF NOT EXISTS spotify_connected BOOLEAN DEFAULT FALSE;
+`;
+
+// Initialize OAuth2 client
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
 
 // Signup route
 app.post("/auth/signup", async (req, res) => {
@@ -250,44 +286,24 @@ app.get("/friends", async (req, res) => {
 
 // Update the add friend endpoint with better error handling and logging
 app.post('/friends/add', authenticateToken, async (req, res) => {
-  const { email } = req.body;
-  
-  try {
-    // Find user by email
-    const userResult = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
-    );
+  const { user_id, email } = req.body;
 
+  try {
+    // Check if the user exists
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     const friendId = userResult.rows[0].id;
 
-    // Check if friendship already exists
-    const existingFriend = await pool.query(
-      `SELECT * FROM friends 
-       WHERE (user_id = $1 AND friend_id = $2)
-       OR (user_id = $2 AND friend_id = $1)`,
-      [req.user.id, friendId]
-    );
+    // Add the friend relationship without the status column
+    await pool.query('INSERT INTO friends (user_id, friend_id) VALUES ($1, $2)', [user_id, friendId]);
 
-    if (existingFriend.rows.length > 0) {
-      return res.status(400).json({ error: 'Friendship already exists' });
-    }
-
-    // Create new friendship
-    await pool.query(
-      `INSERT INTO friends (user_id, friend_id, status) 
-       VALUES ($1, $2, 'accepted')`,
-      [req.user.id, friendId]
-    );
-
-    res.json({ message: 'Friend added successfully' });
-  } catch (err) {
-    console.error('Error adding friend:', err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(201).json({ message: 'Friend added successfully' });
+  } catch (error) {
+    console.error('Error adding friend:', error);
+    res.status(500).json({ error: 'Failed to add friend' });
   }
 });
 
@@ -364,7 +380,7 @@ app.get("/", (req, res) => {
 
 // Add a health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.json({ status: 'ok' });
 });
 
 // Profile update endpoint
@@ -438,11 +454,7 @@ app.use('/uploads', (req, res, next) => {
 // Add middleware for better error logging
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
-  res.status(500).json({ 
-    error: 'Server error', 
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
+  res.status(500).json({ error: err.message });
 });
 
 // Verify database connection
@@ -451,6 +463,434 @@ pool.query('SELECT NOW()', (err, res) => {
     console.error('Database connection error:', err);
   } else {
     console.log('Database connected successfully');
+  }
+});
+
+// Spotify auth endpoint
+app.get('/auth/spotify', authenticateToken, (req, res) => {
+  try {
+    const scopes = [
+      'user-read-currently-playing',
+      'playlist-read-private',
+      'user-read-playback-state'
+    ];
+    
+    const token = req.headers.authorization.split(' ')[1];
+    // Make sure this matches exactly
+    const redirectUri = 'http://localhost:8001/auth/spotify/callback';
+    spotifyApi.setRedirectURI(redirectUri);
+    
+    const authorizeURL = spotifyApi.createAuthorizeURL(scopes, token);
+    console.log('Spotify Auth URL:', authorizeURL);
+    res.send(authorizeURL);
+  } catch (err) {
+    console.error('Spotify auth error:', err);
+    res.status(500).json({ error: 'Failed to initialize Spotify authorization' });
+  }
+});
+
+// Spotify callback
+app.get('/auth/spotify/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    spotifyApi.setRedirectURI('http://localhost:8001/auth/spotify/callback');
+    const data = await spotifyApi.authorizationCodeGrant(code);
+    
+    // ... rest of the auth code ...
+
+    // Update redirect URL to root instead of /chat
+    res.redirect('http://localhost:3000/?spotify=connected');
+  } catch (err) {
+    console.error('Spotify callback error:', err);
+    // Update error redirect as well
+    res.redirect('http://localhost:3000/?spotify=error');
+  }
+});
+
+// Add an endpoint to get current playing track
+app.get('/spotify/current-track', authenticateToken, async (req, res) => {
+  try {
+    // Get user's Spotify tokens
+    const userResult = await pool.query(
+      'SELECT spotify_access_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    if (!userResult.rows[0]?.spotify_access_token) {
+      return res.status(404).json({ error: 'Spotify not connected' });
+    }
+
+    // Set the access token
+    spotifyApi.setAccessToken(userResult.rows[0].spotify_access_token);
+
+    // Get current playing track
+    const data = await spotifyApi.getMyCurrentPlaybackState();
+    
+    if (data.body && data.body.item) {
+      const trackInfo = {
+        name: data.body.item.name,
+        artist: data.body.item.artists[0].name,
+        album: data.body.item.album.name,
+        albumArt: data.body.item.album.images[0]?.url,
+        isPlaying: data.body.is_playing
+      };
+      res.json(trackInfo);
+    } else {
+      res.json({ error: 'No track currently playing' });
+    }
+  } catch (err) {
+    console.error('Error fetching current track:', err);
+    res.status(500).json({ error: 'Failed to fetch current track' });
+  }
+});
+
+// Update the AI chat endpoint
+app.post('/ai/chat', authenticateToken, async (req, res) => {
+  try {
+    const { message, userContext } = req.body;
+    
+    // Create a system message that includes user context
+    const systemMessage = `You are a helpful AI assistant for a chat application. 
+    You're talking to ${userContext.username}, whose current status is "${userContext.status}".
+    Be friendly and personable, and feel free to reference their status or username in natural ways.
+    Keep responses concise (max 2-3 sentences unless specifically asked for more detail).`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: systemMessage },
+        { role: "user", content: message }
+      ],
+      temperature: 0.7,
+      max_tokens: 150
+    });
+
+    const aiResponse = completion.choices[0].message.content;
+    
+    // Log for debugging
+    console.log('AI Response:', aiResponse);
+    
+    res.json({ response: aiResponse });
+  } catch (err) {
+    console.error('OpenAI error:', err);
+    res.status(500).json({ 
+      error: 'Failed to process AI chat request',
+      details: err.message 
+    });
+  }
+});
+
+// Initial Google auth endpoint
+app.get('/auth/google', authenticateToken, (req, res) => {
+  try {
+    const scopes = [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events'
+    ];
+
+    const state = jwt.sign({ userId: req.user.id }, process.env.JWT_SECRET);
+    
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: scopes,
+      state: state,
+      prompt: 'consent'
+    });
+
+    res.json({ url: authUrl });
+  } catch (err) {
+    console.error('Google auth URL generation error:', err);
+    res.status(500).json({ error: 'Failed to initialize Google authorization' });
+  }
+});
+
+// Google OAuth callback endpoint
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    
+    if (!code) {
+      throw new Error('No authorization code received');
+    }
+
+    // Decode state to get user ID
+    const decodedState = jwt.verify(state, process.env.JWT_SECRET);
+    const userId = decodedState.userId;
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    console.log('Received tokens:', tokens); // For debugging
+
+    // Store refresh token in database
+    if (tokens.refresh_token) {
+      await pool.query(
+        'UPDATE users SET google_refresh_token = $1 WHERE id = $2',
+        [tokens.refresh_token, userId]
+      );
+    }
+
+    // Redirect back to frontend with success parameter
+    res.redirect('http://localhost:3000/?calendar=connected');
+  } catch (err) {
+    console.error('Google auth callback error:', err);
+    res.redirect('http://localhost:3000/?calendar=error');
+  }
+});
+
+// Update the calendar events endpoint with better logging
+app.get('/calendar/events', authenticateToken, async (req, res) => {
+  try {
+    console.log('Fetching events for user:', req.user.id);
+    
+    // Get user's refresh token
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      console.log('No refresh token found for user');
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    // Set credentials using refresh token
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    // Create calendar instance
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Get events for a wider range (past 30 days to next 365 days)
+    const timeMin = new Date();
+    timeMin.setDate(timeMin.getDate() - 30); // Include past 30 days
+    const timeMax = new Date();
+    timeMax.setDate(timeMax.getDate() + 365); // Include next year
+
+    console.log('Fetching events between:', {
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString()
+    });
+
+    // Get events
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      maxResults: 2500, // Increased maximum results
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    console.log('Found events:', response.data.items.length);
+    console.log('Sample event:', response.data.items[0]); // Log first event for debugging
+
+    res.json({ events: response.data.items });
+  } catch (err) {
+    console.error('Calendar events error:', err);
+    res.status(500).json({ error: 'Failed to fetch calendar events', details: err.message });
+  }
+});
+
+// Update the create event endpoint to immediately return the created event
+app.post('/calendar/create-event', authenticateToken, async (req, res) => {
+  try {
+    console.log('Creating event for user:', req.user.id);
+    
+    // Get user's refresh token
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    // Set up OAuth client with refresh token
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Format the event
+    const event = {
+      summary: req.body.summary,
+      description: req.body.description,
+      start: {
+        dateTime: req.body.start.dateTime,
+        timeZone: req.body.start.timeZone
+      },
+      end: {
+        dateTime: req.body.end.dateTime,
+        timeZone: req.body.end.timeZone
+      }
+    };
+
+    console.log('Creating event:', event);
+
+    // Create the event
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: event,
+    });
+
+    console.log('Event created:', response.data);
+    res.json(response.data);
+  } catch (err) {
+    console.error('Create event error:', err);
+    res.status(500).json({ error: 'Failed to create event', details: err.message });
+  }
+});
+
+// File sharing endpoints
+app.post('/files/upload', authenticateToken, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const fileKey = await fileService.uploadFile(req.file, req.user.id);
+    
+    // Store file reference in database
+    const result = await pool.query(
+      'INSERT INTO files (user_id, file_key, filename, mime_type) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.user.id, fileKey, req.file.originalname, req.file.mimetype]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('File upload error:', error);
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+app.get('/files/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM files WHERE id = $1 AND user_id = $2',
+      [req.params.fileId, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const signedUrl = await fileService.getSignedUrl(result.rows[0].file_key);
+    res.json({ url: signedUrl });
+  } catch (error) {
+    console.error('File access error:', error);
+    res.status(500).json({ error: 'Failed to access file' });
+  }
+});
+
+// Add these calendar endpoints
+app.get('/calendar/status', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    
+    res.json({ 
+      isConnected: !!result.rows[0]?.google_refresh_token 
+    });
+  } catch (err) {
+    console.error('Calendar status error:', err);
+    res.status(500).json({ error: 'Failed to check calendar status' });
+  }
+});
+
+// Update event endpoint
+app.put('/calendar/events/:eventId', authenticateToken, async (req, res) => {
+  try {
+    console.log('Updating event:', {
+      eventId: req.params.eventId,
+      body: req.body
+    });
+
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // First, get the existing event to ensure it exists
+    try {
+      await calendar.events.get({
+        calendarId: 'primary',
+        eventId: req.params.eventId
+      });
+    } catch (err) {
+      console.error('Event not found:', err);
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // Update the event
+    const response = await calendar.events.update({
+      calendarId: 'primary',
+      eventId: req.params.eventId,
+      requestBody: {
+        summary: req.body.summary,
+        description: req.body.description,
+        start: req.body.start,
+        end: req.body.end
+      }
+    });
+
+    console.log('Event updated successfully:', response.data);
+    res.json(response.data);
+  } catch (err) {
+    console.error('Update event error:', err);
+    res.status(500).json({ 
+      error: 'Failed to update event', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Delete event endpoint
+app.delete('/calendar/events/:eventId', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT google_refresh_token FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    const refreshToken = result.rows[0]?.google_refresh_token;
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Calendar not connected' });
+    }
+
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: req.params.eventId
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete event error:', err);
+    res.status(500).json({ error: 'Failed to delete event', details: err.message });
   }
 });
 
